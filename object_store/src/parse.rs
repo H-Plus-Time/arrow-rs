@@ -15,8 +15,8 @@
 // specific language governing permissions and limitations
 // under the License.
 
-#[cfg(not(target_arch = "wasm32"))]
-use crate::local::LocalFileSystem;
+// #[cfg(not(target_arch = "wasm32"))]
+// use crate::local::LocalFileSystem;
 use crate::memory::InMemory;
 use crate::path::Path;
 use crate::ObjectStore;
@@ -147,8 +147,8 @@ where
     let path = Path::parse(path)?;
 
     let store = match scheme {
-        #[cfg(not(target_arch = "wasm32"))]
-        ObjectStoreScheme::Local => Box::new(LocalFileSystem::new()) as _,
+        // #[cfg(not(target_arch = "wasm32"))]
+        // ObjectStoreScheme::Local => Box::new(LocalFileSystem::new()) as _,
         ObjectStoreScheme::Memory => Box::new(InMemory::new()) as _,
         #[cfg(feature = "aws")]
         ObjectStoreScheme::AmazonS3 => {

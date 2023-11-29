@@ -84,7 +84,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 
 use bytes::{Buf, Bytes};
-use futures::future::{BoxFuture, FutureExt};
+use futures::future::{LocalBoxFuture, BoxFuture, FutureExt};
 use futures::ready;
 use futures::stream::Stream;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncSeek, AsyncSeekExt};
@@ -121,12 +121,12 @@ use crate::arrow::schema::ParquetField;
 pub use store::*;
 
 /// The asynchronous interface used by [`ParquetRecordBatchStream`] to read parquet files
-pub trait AsyncFileReader: Send {
+pub trait AsyncFileReader {
     /// Retrieve the bytes in `range`
-    fn get_bytes(&mut self, range: Range<usize>) -> BoxFuture<'_, Result<Bytes>>;
+    fn get_bytes(&mut self, range: Range<usize>) -> LocalBoxFuture<'_, Result<Bytes>>;
 
     /// Retrieve multiple byte ranges. The default implementation will call `get_bytes` sequentially
-    fn get_byte_ranges(&mut self, ranges: Vec<Range<usize>>) -> BoxFuture<'_, Result<Vec<Bytes>>> {
+    fn get_byte_ranges(&mut self, ranges: Vec<Range<usize>>) -> LocalBoxFuture<'_, Result<Vec<Bytes>>> {
         async move {
             let mut result = Vec::with_capacity(ranges.len());
 
@@ -137,31 +137,31 @@ pub trait AsyncFileReader: Send {
 
             Ok(result)
         }
-        .boxed()
+        .boxed_local()
     }
 
     /// Provides asynchronous access to the [`ParquetMetaData`] of a parquet file,
     /// allowing fine-grained control over how metadata is sourced, in particular allowing
     /// for caching, pre-fetching, catalog metadata, etc...
-    fn get_metadata(&mut self) -> BoxFuture<'_, Result<Arc<ParquetMetaData>>>;
+    fn get_metadata(&mut self) -> LocalBoxFuture<'_, Result<Arc<ParquetMetaData>>>;
 }
 
 impl AsyncFileReader for Box<dyn AsyncFileReader> {
-    fn get_bytes(&mut self, range: Range<usize>) -> BoxFuture<'_, Result<Bytes>> {
+    fn get_bytes(&mut self, range: Range<usize>) -> LocalBoxFuture<'_, Result<Bytes>> {
         self.as_mut().get_bytes(range)
     }
 
-    fn get_byte_ranges(&mut self, ranges: Vec<Range<usize>>) -> BoxFuture<'_, Result<Vec<Bytes>>> {
+    fn get_byte_ranges(&mut self, ranges: Vec<Range<usize>>) -> LocalBoxFuture<'_, Result<Vec<Bytes>>> {
         self.as_mut().get_byte_ranges(ranges)
     }
 
-    fn get_metadata(&mut self) -> BoxFuture<'_, Result<Arc<ParquetMetaData>>> {
+    fn get_metadata(&mut self) -> LocalBoxFuture<'_, Result<Arc<ParquetMetaData>>> {
         self.as_mut().get_metadata()
     }
 }
 
-impl<T: AsyncRead + AsyncSeek + Unpin + Send> AsyncFileReader for T {
-    fn get_bytes(&mut self, range: Range<usize>) -> BoxFuture<'_, Result<Bytes>> {
+impl<T: AsyncRead + AsyncSeek + Unpin> AsyncFileReader for T {
+    fn get_bytes(&mut self, range: Range<usize>) -> LocalBoxFuture<'_, Result<Bytes>> {
         async move {
             self.seek(SeekFrom::Start(range.start as u64)).await?;
 
@@ -174,10 +174,10 @@ impl<T: AsyncRead + AsyncSeek + Unpin + Send> AsyncFileReader for T {
 
             Ok(buffer.into())
         }
-        .boxed()
+        .boxed_local()
     }
 
-    fn get_metadata(&mut self) -> BoxFuture<'_, Result<Arc<ParquetMetaData>>> {
+    fn get_metadata(&mut self) -> LocalBoxFuture<'_, Result<Arc<ParquetMetaData>>> {
         const FOOTER_SIZE_I64: i64 = FOOTER_SIZE as i64;
         async move {
             self.seek(SeekFrom::End(-FOOTER_SIZE_I64)).await?;
@@ -194,7 +194,7 @@ impl<T: AsyncRead + AsyncSeek + Unpin + Send> AsyncFileReader for T {
 
             Ok(Arc::new(decode_metadata(&buf)?))
         }
-        .boxed()
+        .boxed_local()
     }
 }
 
@@ -237,7 +237,7 @@ pub struct AsyncReader<T>(T);
 /// See [`ArrowReaderBuilder`] for additional member functions
 pub type ParquetRecordBatchStreamBuilder<T> = ArrowReaderBuilder<AsyncReader<T>>;
 
-impl<T: AsyncFileReader + Send + 'static> ParquetRecordBatchStreamBuilder<T> {
+impl<T: AsyncFileReader + 'static> ParquetRecordBatchStreamBuilder<T> {
     /// Create a new [`ParquetRecordBatchStreamBuilder`] with the provided parquet file
     pub async fn new(input: T) -> Result<Self> {
         Self::new_with_options(input, Default::default()).await
@@ -418,7 +418,7 @@ struct ReaderFactory<T> {
 
 impl<T> ReaderFactory<T>
 where
-    T: AsyncFileReader + Send,
+    T: AsyncFileReader,
 {
     /// Reads the next row group with the provided `selection`, `projection` and `batch_size`
     ///
@@ -522,7 +522,7 @@ enum StreamState<T> {
     /// Decoding a batch
     Decoding(ParquetRecordBatchReader),
     /// Reading data from input
-    Reading(BoxFuture<'static, ReadResult<T>>),
+    Reading(LocalBoxFuture<'static, ReadResult<T>>),
     /// Error
     Error,
 }
@@ -580,7 +580,7 @@ impl<T> ParquetRecordBatchStream<T> {
 
 impl<T> Stream for ParquetRecordBatchStream<T>
 where
-    T: AsyncFileReader + Unpin + Send + 'static,
+    T: AsyncFileReader + Unpin + 'static,
 {
     type Item = Result<RecordBatch>;
 
@@ -616,7 +616,7 @@ where
                             self.projection.clone(),
                             self.batch_size,
                         )
-                        .boxed();
+                        .boxed_local();
 
                     self.state = StreamState::Reading(fut)
                 }
@@ -651,7 +651,7 @@ struct InMemoryRowGroup<'a> {
 
 impl<'a> InMemoryRowGroup<'a> {
     /// Fetches the necessary column data into memory
-    async fn fetch<T: AsyncFileReader + Send>(
+    async fn fetch<T: AsyncFileReader>(
         &mut self,
         input: &mut T,
         projection: &ProjectionMask,

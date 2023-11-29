@@ -47,7 +47,7 @@ pub(crate) fn hmac_sha256(secret: impl AsRef<[u8]>, bytes: impl AsRef<[u8]>) -> 
 pub async fn collect_bytes<S, E>(mut stream: S, size_hint: Option<usize>) -> Result<Bytes, E>
 where
     E: Send,
-    S: Stream<Item = Result<Bytes, E>> + Send + Unpin,
+    S: Stream<Item = Result<Bytes, E>> + Unpin,
 {
     let first = stream.next().await.transpose()?.unwrap_or_default();
 
@@ -103,9 +103,9 @@ pub async fn coalesce_ranges<F, E, Fut>(
     coalesce: usize,
 ) -> Result<Vec<Bytes>, E>
 where
-    F: Send + FnMut(std::ops::Range<usize>) -> Fut,
-    E: Send,
-    Fut: std::future::Future<Output = Result<Bytes, E>> + Send,
+    F: FnMut(std::ops::Range<usize>) -> Fut,
+    // E,
+    Fut: std::future::Future<Output = Result<Bytes, E>>,
 {
     let fetch_ranges = merge_ranges(ranges, coalesce);
 

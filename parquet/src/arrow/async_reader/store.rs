@@ -16,10 +16,11 @@
 // under the License.
 
 use std::ops::Range;
+use std::rc::Rc;
 use std::sync::Arc;
 
 use bytes::Bytes;
-use futures::future::BoxFuture;
+use futures::future::{BoxFuture, LocalBoxFuture};
 use futures::{FutureExt, TryFutureExt};
 
 use object_store::{ObjectMeta, ObjectStore};
@@ -54,7 +55,7 @@ use crate::file::metadata::ParquetMetaData;
 /// ```
 #[derive(Clone, Debug)]
 pub struct ParquetObjectReader {
-    store: Arc<dyn ObjectStore>,
+    store: Rc<dyn ObjectStore>,
     meta: ObjectMeta,
     metadata_size_hint: Option<usize>,
     preload_column_index: bool,
@@ -65,7 +66,7 @@ impl ParquetObjectReader {
     /// Creates a new [`ParquetObjectReader`] for the provided [`ObjectStore`] and [`ObjectMeta`]
     ///
     /// [`ObjectMeta`] can be obtained using [`ObjectStore::list`] or [`ObjectStore::head`]
-    pub fn new(store: Arc<dyn ObjectStore>, meta: ObjectMeta) -> Self {
+    pub fn new(store: Rc<dyn ObjectStore>, meta: ObjectMeta) -> Self {
         Self {
             store,
             meta,
@@ -102,16 +103,14 @@ impl ParquetObjectReader {
 }
 
 impl AsyncFileReader for ParquetObjectReader {
-    fn get_bytes(&mut self, range: Range<usize>) -> BoxFuture<'_, Result<Bytes>> {
+    fn get_bytes(&mut self, range: Range<usize>) -> LocalBoxFuture<'_, Result<Bytes>> {
         self.store
             .get_range(&self.meta.location, range)
             .map_err(|e| ParquetError::General(format!("AsyncChunkReader::get_bytes error: {e}")))
-            .boxed()
+            .boxed_local()
     }
 
-    fn get_byte_ranges(&mut self, ranges: Vec<Range<usize>>) -> BoxFuture<'_, Result<Vec<Bytes>>>
-    where
-        Self: Send,
+    fn get_byte_ranges(&mut self, ranges: Vec<Range<usize>>) -> LocalBoxFuture<'_, Result<Vec<Bytes>>>
     {
         async move {
             self.store
@@ -123,10 +122,10 @@ impl AsyncFileReader for ParquetObjectReader {
                     ))
                 })
         }
-        .boxed()
+        .boxed_local()
     }
 
-    fn get_metadata(&mut self) -> BoxFuture<'_, Result<Arc<ParquetMetaData>>> {
+    fn get_metadata(&mut self) -> LocalBoxFuture<'_, Result<Arc<ParquetMetaData>>> {
         Box::pin(async move {
             let preload_column_index = self.preload_column_index;
             let preload_offset_index = self.preload_offset_index;
