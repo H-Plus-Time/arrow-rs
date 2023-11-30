@@ -23,17 +23,18 @@ use crate::file::page_index::index::Index;
 use crate::file::page_index::index_reader::{acc_range, decode_column_index, decode_offset_index};
 use bytes::Bytes;
 use futures::future::BoxFuture;
+use futures::future::LocalBoxFuture;
 use futures::FutureExt;
 use std::future::Future;
 use std::ops::Range;
 
 /// A data source that can be used with [`MetadataLoader`] to load [`ParquetMetaData`]
 pub trait MetadataFetch {
-    fn fetch(&mut self, range: Range<usize>) -> BoxFuture<'_, Result<Bytes>>;
+    fn fetch(&mut self, range: Range<usize>) -> LocalBoxFuture<'_, Result<Bytes>>;
 }
 
 impl<'a, T: AsyncFileReader> MetadataFetch for &'a mut T {
-    fn fetch(&mut self, range: Range<usize>) -> BoxFuture<'_, Result<Bytes>> {
+    fn fetch(&mut self, range: Range<usize>) -> LocalBoxFuture<'_, Result<Bytes>> {
         self.get_bytes(range)
     }
 }
@@ -200,11 +201,11 @@ struct MetadataFetchFn<F>(F);
 
 impl<F, Fut> MetadataFetch for MetadataFetchFn<F>
 where
-    F: FnMut(Range<usize>) -> Fut + Send,
-    Fut: Future<Output = Result<Bytes>> + Send,
+    F: FnMut(Range<usize>) -> Fut,
+    Fut: Future<Output = Result<Bytes>>,
 {
-    fn fetch(&mut self, range: Range<usize>) -> BoxFuture<'_, Result<Bytes>> {
-        async move { self.0(range).await }.boxed()
+    fn fetch(&mut self, range: Range<usize>) -> LocalBoxFuture<'_, Result<Bytes>> {
+        async move { self.0(range).await }.boxed_local()
     }
 }
 
@@ -230,8 +231,8 @@ pub async fn fetch_parquet_metadata<F, Fut>(
     prefetch: Option<usize>,
 ) -> Result<ParquetMetaData>
 where
-    F: FnMut(Range<usize>) -> Fut + Send,
-    Fut: Future<Output = Result<Bytes>> + Send,
+    F: FnMut(Range<usize>) -> Fut,
+    Fut: Future<Output = Result<Bytes>>,
 {
     let fetch = MetadataFetchFn(fetch);
     let loader = MetadataLoader::load(fetch, file_size, prefetch).await?;

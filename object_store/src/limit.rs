@@ -190,7 +190,7 @@ fn permit_get_result(r: GetResult, permit: OwnedSemaphorePermit) -> GetResult {
     let payload = match r.payload {
         v @ GetResultPayload::File(_, _) => v,
         GetResultPayload::Stream(s) => {
-            GetResultPayload::Stream(PermitWrapper::new(s, permit).boxed())
+            GetResultPayload::Stream(PermitWrapper::new(s, permit).boxed_local())
         }
     };
     GetResult { payload, ..r }

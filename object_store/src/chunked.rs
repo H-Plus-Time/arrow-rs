@@ -123,7 +123,7 @@ impl ObjectStore for ChunkedStore {
                         Some((Ok(slice), (stream, buffer, exhausted, chunk_size)))
                     },
                 )
-                .boxed()
+                .boxed_local()
             }
         };
         Ok(GetResult {

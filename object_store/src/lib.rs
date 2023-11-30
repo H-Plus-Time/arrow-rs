@@ -458,23 +458,27 @@ compile_error!("Features 'gcp', 'aws', 'azure', 'http' are not supported on wasm
 pub mod aws;
 #[cfg(feature = "azure")]
 pub mod azure;
-pub mod buffered;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod chunked;
+// #[cfg(not(target_arch = "wasm32"))]
+// pub mod buffered;
+// #[cfg(not(target_arch = "wasm32"))]
+// pub mod chunked;
 pub mod delimited;
 #[cfg(feature = "gcp")]
 pub mod gcp;
 #[cfg(feature = "http")]
 pub mod http;
-pub mod limit;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod local;
+// #[cfg(not(target_arch = "wasm32"))]
+// pub mod limit;
+// #[cfg(not(target_arch = "wasm32"))]
+// pub mod local;
 pub mod memory;
 pub mod path;
-pub mod prefix;
+// #[cfg(not(target_arch = "wasm32"))]
+// pub mod prefix;
 #[cfg(feature = "cloud")]
 pub mod signer;
-pub mod throttle;
+// #[cfg(not(target_arch = "wasm32"))]
+// pub mod throttle;
 
 #[cfg(feature = "cloud")]
 mod client;
@@ -490,6 +494,7 @@ mod config;
 
 mod tags;
 
+use futures::stream::LocalBoxStream;
 pub use tags::TagSet;
 
 pub mod multipart;
@@ -499,8 +504,8 @@ mod util;
 pub use parse::{parse_url, parse_url_opts};
 
 use crate::path::Path;
-#[cfg(not(target_arch = "wasm32"))]
-use crate::util::maybe_spawn_blocking;
+// #[cfg(not(target_arch = "wasm32"))]
+// use crate::util::maybe_spawn_blocking;
 pub use crate::util::{coalesce_ranges, collect_bytes, OBJECT_STORE_COALESCE_DEFAULT};
 use async_trait::async_trait;
 use bytes::Bytes;
@@ -508,8 +513,8 @@ use chrono::{DateTime, Utc};
 use futures::{stream::BoxStream, StreamExt, TryStreamExt};
 use snafu::Snafu;
 use std::fmt::{Debug, Formatter};
-#[cfg(not(target_arch = "wasm32"))]
-use std::io::{Read, Seek, SeekFrom};
+// #[cfg(not(target_arch = "wasm32"))]
+// use std::io::{Read, Seek, SeekFrom};
 use std::ops::Range;
 use std::sync::Arc;
 use tokio::io::AsyncWrite;
@@ -521,8 +526,8 @@ pub type DynObjectStore = dyn ObjectStore;
 pub type MultipartId = String;
 
 /// Universal API to multiple object store services.
-#[async_trait]
-pub trait ObjectStore: std::fmt::Display + Send + Sync + Debug + 'static {
+#[async_trait(?Send)]
+pub trait ObjectStore: std::fmt::Display + Sync + Debug + 'static {
     /// Save the provided bytes to the specified location
     ///
     /// The operation is guaranteed to be atomic, it will either successfully
@@ -654,8 +659,8 @@ pub trait ObjectStore: std::fmt::Display + Send + Sync + Debug + 'static {
     /// ```
     fn delete_stream<'a>(
         &'a self,
-        locations: BoxStream<'a, Result<Path>>,
-    ) -> BoxStream<'a, Result<Path>> {
+        locations: LocalBoxStream<'a, Result<Path>>,
+    ) -> LocalBoxStream<'a, Result<Path>> {
         locations
             .map(|location| async {
                 let location = location?;
@@ -663,7 +668,7 @@ pub trait ObjectStore: std::fmt::Display + Send + Sync + Debug + 'static {
                 Ok(location)
             })
             .buffered(10)
-            .boxed()
+            .boxed_local()
     }
 
     /// List all the objects with the given prefix.
@@ -672,7 +677,7 @@ pub trait ObjectStore: std::fmt::Display + Send + Sync + Debug + 'static {
     /// `foo/bar_baz/x`.
     ///
     /// Note: the order of returned [`ObjectMeta`] is not guaranteed
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'_, Result<ObjectMeta>>;
+    fn list(&self, prefix: Option<&Path>) -> LocalBoxStream<'_, Result<ObjectMeta>>;
 
     /// List all the objects with the given prefix and a location greater than `offset`
     ///
@@ -684,11 +689,11 @@ pub trait ObjectStore: std::fmt::Display + Send + Sync + Debug + 'static {
         &self,
         prefix: Option<&Path>,
         offset: &Path,
-    ) -> BoxStream<'_, Result<ObjectMeta>> {
+    ) -> LocalBoxStream<'_, Result<ObjectMeta>> {
         let offset = offset.clone();
         self.list(prefix)
             .try_filter(move |f| futures::future::ready(f.location > offset))
-            .boxed()
+            .boxed_local()
     }
 
     /// List objects with the given prefix and an implementation specific
@@ -735,7 +740,7 @@ pub trait ObjectStore: std::fmt::Display + Send + Sync + Debug + 'static {
 
 macro_rules! as_ref_impl {
     ($type:ty) => {
-        #[async_trait]
+        #[async_trait(?Send)]
         impl ObjectStore for $type {
             async fn put(&self, location: &Path, bytes: Bytes) -> Result<PutResult> {
                 self.as_ref().put(location, bytes).await
@@ -795,12 +800,12 @@ macro_rules! as_ref_impl {
 
             fn delete_stream<'a>(
                 &'a self,
-                locations: BoxStream<'a, Result<Path>>,
-            ) -> BoxStream<'a, Result<Path>> {
+                locations: LocalBoxStream<'a, Result<Path>>,
+            ) -> LocalBoxStream<'a, Result<Path>> {
                 self.as_ref().delete_stream(locations)
             }
 
-            fn list(&self, prefix: Option<&Path>) -> BoxStream<'_, Result<ObjectMeta>> {
+            fn list(&self, prefix: Option<&Path>) -> LocalBoxStream<'_, Result<ObjectMeta>> {
                 self.as_ref().list(prefix)
             }
 
@@ -808,7 +813,7 @@ macro_rules! as_ref_impl {
                 &self,
                 prefix: Option<&Path>,
                 offset: &Path,
-            ) -> BoxStream<'_, Result<ObjectMeta>> {
+            ) -> LocalBoxStream<'_, Result<ObjectMeta>> {
                 self.as_ref().list_with_offset(prefix, offset)
             }
 
@@ -835,7 +840,7 @@ macro_rules! as_ref_impl {
     };
 }
 
-as_ref_impl!(Arc<dyn ObjectStore>);
+// as_ref_impl!(Arc<dyn ObjectStore>);
 as_ref_impl!(Box<dyn ObjectStore>);
 
 /// Result of a list call that includes objects, prefixes (directories) and a
@@ -983,7 +988,7 @@ pub enum GetResultPayload {
     /// The file, path
     File(std::fs::File, std::path::PathBuf),
     /// An opaque stream of bytes
-    Stream(BoxStream<'static, Result<Bytes>>),
+    Stream(LocalBoxStream<'static, Result<Bytes>>),
 }
 
 impl Debug for GetResultPayload {
@@ -1000,26 +1005,26 @@ impl GetResult {
     pub async fn bytes(self) -> Result<Bytes> {
         let len = self.range.end - self.range.start;
         match self.payload {
-            #[cfg(not(target_arch = "wasm32"))]
-            GetResultPayload::File(mut file, path) => {
-                maybe_spawn_blocking(move || {
-                    file.seek(SeekFrom::Start(self.range.start as _))
-                        .map_err(|source| local::Error::Seek {
-                            source,
-                            path: path.clone(),
-                        })?;
+            // #[cfg(not(target_arch = "wasm32"))]
+            // GetResultPayload::File(mut file, path) => {
+            //     maybe_spawn_blocking(move || {
+            //         file.seek(SeekFrom::Start(self.range.start as _))
+            //             .map_err(|source| local::Error::Seek {
+            //                 source,
+            //                 path: path.clone(),
+            //             })?;
 
-                    let mut buffer = Vec::with_capacity(len);
-                    file.take(len as _)
-                        .read_to_end(&mut buffer)
-                        .map_err(|source| local::Error::UnableToReadBytes { source, path })?;
+            //         let mut buffer = Vec::with_capacity(len);
+            //         file.take(len as _)
+            //             .read_to_end(&mut buffer)
+            //             .map_err(|source| local::Error::UnableToReadBytes { source, path })?;
 
-                    Ok(buffer.into())
-                })
-                .await
-            }
+            //         Ok(buffer.into())
+            //     })
+            //     .await
+            // }
             GetResultPayload::Stream(s) => collect_bytes(s, Some(len)).await,
-            #[cfg(target_arch = "wasm32")]
+            // #[cfg(target_arch = "wasm32")]
             _ => unimplemented!("File IO not implemented on wasm32."),
         }
     }
@@ -1038,15 +1043,15 @@ impl GetResult {
     ///
     /// If not called from a tokio context, this will perform IO on the current thread with
     /// no additional complexity or overheads
-    pub fn into_stream(self) -> BoxStream<'static, Result<Bytes>> {
+    pub fn into_stream(self) -> LocalBoxStream<'static, Result<Bytes>> {
         match self.payload {
-            #[cfg(not(target_arch = "wasm32"))]
-            GetResultPayload::File(file, path) => {
-                const CHUNK_SIZE: usize = 8 * 1024;
-                local::chunked_stream(file, path, self.range, CHUNK_SIZE)
-            }
+            // #[cfg(not(target_arch = "wasm32"))]
+            // GetResultPayload::File(file, path) => {
+            //     const CHUNK_SIZE: usize = 8 * 1024;
+            //     local::chunked_stream(file, path, self.range, CHUNK_SIZE)
+            // }
             GetResultPayload::Stream(s) => s,
-            #[cfg(target_arch = "wasm32")]
+            // #[cfg(target_arch = "wasm32")]
             _ => unimplemented!("File IO not implemented on wasm32."),
         }
     }
@@ -2188,7 +2193,7 @@ mod tests {
     fn list_store<'a>(
         store: &'a dyn ObjectStore,
         path_str: &str,
-    ) -> BoxStream<'a, Result<ObjectMeta>> {
+    ) -> LocalBoxStream<'a, Result<ObjectMeta>> {
         let path = Path::from(path_str);
         store.list(Some(&path))
     }

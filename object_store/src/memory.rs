@@ -24,6 +24,7 @@ use crate::{GetOptions, MultipartId};
 use async_trait::async_trait;
 use bytes::Bytes;
 use chrono::{DateTime, Utc};
+use futures::stream::LocalBoxStream;
 use futures::{stream::BoxStream, StreamExt};
 use parking_lot::RwLock;
 use snafu::{ensure, OptionExt, Snafu};
@@ -166,7 +167,7 @@ impl std::fmt::Display for InMemory {
     }
 }
 
-#[async_trait]
+#[async_trait(?Send)]
 impl ObjectStore for InMemory {
     async fn put_opts(&self, location: &Path, bytes: Bytes, opts: PutOptions) -> Result<PutResult> {
         let mut storage = self.storage.write();
@@ -270,7 +271,7 @@ impl ObjectStore for InMemory {
         Ok(())
     }
 
-    fn list(&self, prefix: Option<&Path>) -> BoxStream<'_, Result<ObjectMeta>> {
+    fn list(&self, prefix: Option<&Path>) -> LocalBoxStream<'_, Result<ObjectMeta>> {
         let root = Path::default();
         let prefix = prefix.unwrap_or(&root);
 
@@ -296,7 +297,7 @@ impl ObjectStore for InMemory {
             })
             .collect();
 
-        futures::stream::iter(values).boxed()
+        futures::stream::iter(values).boxed_local()
     }
 
     /// The memory implementation returns all results, as opposed to the cloud
